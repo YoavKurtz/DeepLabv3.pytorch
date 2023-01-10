@@ -10,10 +10,13 @@ from scipy.io import loadmat
 from torch.autograd import Variable
 from torchvision import transforms
 
+import wandb
+
 import deeplab
 from pascal import VOCSegmentation
 from cityscapes import Cityscapes
 from utils import AverageMeter, inter_and_union
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--train', action='store_true', default=False,
@@ -50,6 +53,11 @@ parser.add_argument('--resume', type=str, default=None,
                     help='path to checkpoint to resume from')
 parser.add_argument('--workers', type=int, default=4,
                     help='number of data loading workers')
+
+parser.add_argument('--print_freq', type=int, default=50)
+parser.add_argument('--wandb-off', action='store_true', default=False)
+parser.add_argument('--extra-tags', type=str, default='')
+
 args = parser.parse_args()
 
 PASCAL_PATH = '/mnt5/yoavkurtz/datasets/PASCAL_VOC_2012'
@@ -57,7 +65,17 @@ PASCAL_PATH = '/mnt5/yoavkurtz/datasets/PASCAL_VOC_2012'
 
 def main():
     assert torch.cuda.is_available()
+    # TODO handle reproducibility?
     torch.backends.cudnn.benchmark = True
+
+    use_wandb = not args.wandb_off
+    if use_wandb:
+        tags = [args.dataset, args.backbone]
+        if args.extra_tags != '':
+            tags += [args.extra_tags]
+        wandb.init(project='group_ortho', config=vars(args), tags=tags)
+        wandb.run.log_code(".")
+
     model_fname = 'data/deeplab_{0}_{1}_v3_{2}_epoch%d.pth'.format(
         args.backbone, args.dataset, args.exp)
     if args.dataset == 'pascal':
@@ -140,11 +158,15 @@ def main():
                 optimizer.step()
                 optimizer.zero_grad()
 
-                print('epoch: {0}\t'
-                      'iter: {1}/{2}\t'
-                      'lr: {3:.6f}\t'
-                      'loss: {loss.val:.4f} ({loss.ema:.4f})'.format(
-                    epoch + 1, i + 1, len(dataset_loader), lr, loss=losses))
+                if i % args.print_freq == 0:
+                    print('epoch: {0}\t'
+                          'iter: {1}/{2}\t'
+                          'lr: {3:.6f}\t'
+                          'loss: {loss.val:.4f} ({loss.ema:.4f})'.format(
+                        epoch + 1, i + 1, len(dataset_loader), lr, loss=losses))
+
+            if use_wandb:
+                wandb.log({'tarin_loss': losses.avg})
 
             if epoch % 10 == 9:
                 torch.save({
@@ -186,6 +208,12 @@ def main():
         for i, val in enumerate(iou):
             print('IoU {0}: {1:.2f}'.format(dataset.CLASSES[i], val * 100))
         print('Mean IoU: {0:.2f}'.format(iou.mean() * 100))
+
+        if use_wandb:
+            wandb.summary['Mean IoU'] = iou.mean() * 100
+
+    if use_wandb:
+        wandb.finish()
 
 
 if __name__ == "__main__":
