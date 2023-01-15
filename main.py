@@ -17,6 +17,11 @@ from pascal import VOCSegmentation
 from cityscapes import Cityscapes
 from utils import AverageMeter, inter_and_union
 
+# Add parent older to path
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir)))
+
+import weight_regularization as wr
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--train', action='store_true', default=False,
@@ -57,6 +62,8 @@ parser.add_argument('--workers', type=int, default=4,
 parser.add_argument('--print_freq', type=int, default=50)
 parser.add_argument('--wandb-off', action='store_true', default=False)
 parser.add_argument('--extra-tags', type=str, default='')
+parser.add_argument('--reg-type', type=str, default=None)
+parser.add_argument('--ortho_decay', type=float, default=1e-2)
 
 args = parser.parse_args()
 
@@ -96,6 +103,11 @@ def main():
     else:
         raise ValueError('Unknown backbone: {}'.format(args.backbone))
 
+    if args.groups and args.reg_type is not None:
+        weight_groups_dict = wr.get_layers_to_regularize(model, num_groups_fn=(lambda x: args.groups))
+    else:
+        weight_groups_dict = None
+
     if args.train:
         criterion = nn.CrossEntropyLoss(ignore_index=255)
         model = nn.DataParallel(model).cuda()
@@ -123,6 +135,7 @@ def main():
             pin_memory=True, num_workers=args.workers)
         max_iter = args.epochs * len(dataset_loader)
         losses = AverageMeter()
+        reg_losses = AverageMeter()
         start_epoch = 0
 
         if args.resume:
@@ -148,7 +161,10 @@ def main():
                 target = Variable(target.cuda())
                 outputs = model(inputs)
                 loss = criterion(outputs, target)
-                # TODO call reg function here
+                if args.reg_type and weight_groups_dict is not None:
+                    ortho_loss = wr.weights_reg(model, args.reg_type, weight_groups_dict)
+                    reg_losses.update(ortho_loss.item(), args.batch_size)
+                    loss += args.ortho_decay * ortho_loss
 
                 if np.isnan(loss.item()) or np.isinf(loss.item()):
                     pdb.set_trace()
@@ -166,7 +182,7 @@ def main():
                         epoch + 1, i + 1, len(dataset_loader), lr, loss=losses))
 
             if use_wandb:
-                wandb.log({'tarin_loss': losses.avg})
+                wandb.log({'tarin_loss': losses.avg, 'reg_loss': reg_losses.avg})
 
             if epoch % 10 == 9:
                 torch.save({
