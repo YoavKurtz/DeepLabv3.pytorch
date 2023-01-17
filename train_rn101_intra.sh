@@ -1,0 +1,1 @@
+python main.py --train --exp gn_ws_lr7e-3_intra --epochs 50 --base_lr 0.007 --groups 32 --weight_std --reg-type GSO_intra

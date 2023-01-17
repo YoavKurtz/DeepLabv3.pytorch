@@ -182,7 +182,7 @@ def main():
                         epoch + 1, i + 1, len(dataset_loader), lr, loss=losses))
 
             if use_wandb:
-                wandb.log({'tarin_loss': losses.avg, 'reg_loss': reg_losses.avg})
+                wandb.log({'tarin_loss': losses.avg, 'reg_loss': reg_losses.avg, 'epoch': epoch})
 
             if epoch % 10 == 9:
                 torch.save({
